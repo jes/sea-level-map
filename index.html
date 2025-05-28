@@ -79,7 +79,7 @@
         <h3>Sea Level</h3>
         <div class="slider-container">
             <input type="range" id="seaLevelSlider" class="sea-level-slider" 
-                   min="-1000" max="1000" value="0" step="1">
+                   min="-1000" max="1000" value="0" step="10">
             <span id="seaLevelValue" class="sea-level-value">0m</span>
         </div>
     </div>
@@ -87,16 +87,56 @@
     <script>
         let currentSeaLevel = 0;
         
+        // Function to parse URL fragment and extract map state
+        function parseUrlFragment() {
+            const hash = window.location.hash.substring(1);
+            if (!hash) return null;
+            
+            const params = hash.split('/');
+            if (params.length >= 3) {
+                return {
+                    zoom: parseFloat(params[0]) || 2,
+                    lat: parseFloat(params[1]) || 0,
+                    lng: parseFloat(params[2]) || 0,
+                    level: params[3] ? parseInt(params[3]) : 0
+                };
+            }
+            return null;
+        }
+        
+        // Function to update URL fragment with current map state
+        function updateUrlFragment() {
+            const center = map.getCenter();
+            const zoom = map.getZoom();
+            const fragment = `${zoom.toFixed(2)}/${center.lat.toFixed(6)}/${center.lng.toFixed(6)}/${currentSeaLevel}`;
+            window.history.replaceState(null, null, `#${fragment}`);
+        }
+        
+        // Get initial state from URL or use defaults
+        const initialState = parseUrlFragment() || {
+            zoom: 2,
+            lat: 0,
+            lng: 0,
+            level: 0
+        };
+        
+        // Set initial sea level
+        currentSeaLevel = initialState.level;
+        
         const map = new maplibregl.Map({
             container: 'map',
             style: 'https://demotiles.maplibre.org/style.json',
-            center: [0,0],
-            zoom: 2,
+            center: [initialState.lng, initialState.lat],
+            zoom: initialState.zoom,
         });
 
         // Sea level slider functionality
         const slider = document.getElementById('seaLevelSlider');
         const valueDisplay = document.getElementById('seaLevelValue');
+        
+        // Set initial slider value and display
+        slider.value = initialState.level;
+        valueDisplay.textContent = initialState.level + 'm';
         
         function updateSeaLevel(level) {
             currentSeaLevel = level;
@@ -107,6 +147,9 @@
                     `/tile/${level}/{z}/{x}/{y}.png`
                 ]);
             }
+            
+            // Update URL fragment
+            updateUrlFragment();
         }
         
         // Update display value while dragging
@@ -118,6 +161,10 @@
         slider.addEventListener('change', (e) => {
             updateSeaLevel(parseInt(e.target.value));
         });
+        
+        // Update URL fragment when map moves or zooms
+        map.on('moveend', updateUrlFragment);
+        map.on('zoomend', updateUrlFragment);
 
         map.on('load', () => {
             map.addSource('terrain', {

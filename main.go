@@ -37,6 +37,21 @@ const (
 	tileSize = 256
 )
 
+// clampSeaLevel ensures the sea level is within valid bounds and rounded to 10m increments
+func clampSeaLevel(level int) int {
+	// Round to nearest 10m increment
+	level = ((level + 5) / 10) * 10
+
+	// Clamp to valid range
+	if level < -1000 {
+		level = -1000
+	} else if level > 1000 {
+		level = 1000
+	}
+
+	return level
+}
+
 // generateSeaLevelTile fetches elevation data and creates a blue tile for areas above sea level
 func generateSeaLevelTile(seaLevel int, z, x, y string) ([]byte, error) {
 	// Create cache key that includes sea level
@@ -237,6 +252,10 @@ func serveTile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid sea level", http.StatusBadRequest)
 		return
 	}
+
+	// Clamp sea level to valid range and 10m increments
+	level = clampSeaLevel(level)
+
 	if _, err := strconv.Atoi(z); err != nil {
 		http.Error(w, "Invalid zoom level", http.StatusBadRequest)
 		return
