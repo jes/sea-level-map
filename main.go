@@ -38,15 +38,15 @@ const (
 )
 
 // generateSeaLevelTile fetches elevation data and creates a blue tile for areas above sea level
-func generateSeaLevelTile(z, x, y string) ([]byte, error) {
-	// Create cache key
-	cacheKey := fmt.Sprintf("%s/%s/%s", z, x, y)
+func generateSeaLevelTile(seaLevel int, z, x, y string) ([]byte, error) {
+	// Create cache key that includes sea level
+	cacheKey := fmt.Sprintf("%d/%s/%s/%s", seaLevel, z, x, y)
 
 	// Check cache first
 	cache.mu.RLock()
 	if cached, exists := cache.tiles[cacheKey]; exists {
 		cache.mu.RUnlock()
-		log.Printf("Cache hit for tile: z=%s, x=%s, y=%s", z, x, y)
+		log.Printf("Cache hit for tile: level=%d, z=%s, x=%s, y=%s", seaLevel, z, x, y)
 		return cached.data, nil
 	}
 	cache.mu.RUnlock()
@@ -56,7 +56,7 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 	if ch, exists := cache.inFlight[cacheKey]; exists {
 		// Another request is in flight, wait for it
 		cache.flightMu.Unlock()
-		log.Printf("Waiting for in-flight tile: z=%s, x=%s, y=%s", z, x, y)
+		log.Printf("Waiting for in-flight tile: level=%d, z=%s, x=%s, y=%s", seaLevel, z, x, y)
 		data := <-ch
 		return data, nil
 	}
@@ -76,7 +76,7 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 	// Fetch elevation data from terrarium tiles
 	elevationURL := fmt.Sprintf("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%s/%s/%s.png", z, x, y)
 
-	log.Printf("Fetching upstream tile: z=%s, x=%s, y=%s", z, x, y)
+	log.Printf("Fetching upstream tile: level=%d, z=%s, x=%s, y=%s", seaLevel, z, x, y)
 	fetchStart := time.Now()
 
 	// Create HTTP request with user-agent
@@ -110,7 +110,7 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to decode elevation PNG: %v", err)
 	}
 	fetchDuration := time.Since(fetchStart)
-	log.Printf("Upstream fetch completed in %v: z=%s, x=%s, y=%s", fetchDuration, z, x, y)
+	log.Printf("Upstream fetch completed in %v: level=%d, z=%s, x=%s, y=%s", fetchDuration, seaLevel, z, x, y)
 
 	// Start processing timer
 	processStart := time.Now()
@@ -162,9 +162,9 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 						// Using integer arithmetic for better performance
 						elevation := int(rVal)*256 + int(gVal) + int(bVal)/256 - 32768
 
-						// If elevation is below sea level (negative), make it blue, otherwise transparent
+						// If elevation is below the specified sea level, make it blue, otherwise transparent
 						var color [4]uint8
-						if elevation < 0 {
+						if elevation < seaLevel {
 							color = blue
 						} else {
 							color = transparent
@@ -198,9 +198,9 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 	processDuration := time.Since(processStart)
 	totalDuration := time.Since(fetchStart)
 
-	log.Printf("Image processing completed in %v: z=%s, x=%s, y=%s", processDuration, z, x, y)
-	log.Printf("Total tile generation: %v (fetch: %v, process: %v): z=%s, x=%s, y=%s",
-		totalDuration, fetchDuration, processDuration, z, x, y)
+	log.Printf("Image processing completed in %v: level=%d, z=%s, x=%s, y=%s", processDuration, seaLevel, z, x, y)
+	log.Printf("Total tile generation: %v (fetch: %v, process: %v): level=%d, z=%s, x=%s, y=%s",
+		totalDuration, fetchDuration, processDuration, seaLevel, z, x, y)
 
 	// Cache the result
 	cache.mu.Lock()
@@ -214,7 +214,7 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 	ch <- tileData
 	close(ch)
 
-	log.Printf("Generated and cached tile: z=%s, x=%s, y=%s", z, x, y)
+	log.Printf("Generated and cached tile: level=%d, z=%s, x=%s, y=%s", seaLevel, z, x, y)
 	return tileData, nil
 }
 
@@ -226,11 +226,17 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 // serveTile serves a sea level tile
 func serveTile(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
+	levelStr := vars["level"]
 	z := vars["z"]
 	x := vars["x"]
 	y := vars["y"]
 
-	// Validate that z, x, y are valid integers
+	// Validate that level, z, x, y are valid integers
+	level, err := strconv.Atoi(levelStr)
+	if err != nil {
+		http.Error(w, "Invalid sea level", http.StatusBadRequest)
+		return
+	}
 	if _, err := strconv.Atoi(z); err != nil {
 		http.Error(w, "Invalid zoom level", http.StatusBadRequest)
 		return
@@ -245,7 +251,7 @@ func serveTile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate sea level tile
-	tileData, err := generateSeaLevelTile(z, x, y)
+	tileData, err := generateSeaLevelTile(level, z, x, y)
 	if err != nil {
 		http.Error(w, "Failed to generate tile", http.StatusInternalServerError)
 		log.Printf("Error generating tile: %v", err)
@@ -260,7 +266,7 @@ func serveTile(w http.ResponseWriter, r *http.Request) {
 	// Write the tile data
 	w.Write(tileData)
 
-	log.Printf("Served tile: z=%s, x=%s, y=%s", z, x, y)
+	log.Printf("Served tile: level=%d, z=%s, x=%s, y=%s", level, z, x, y)
 }
 
 func main() {
@@ -274,7 +280,7 @@ func main() {
 
 	// Routes
 	r.HandleFunc("/", serveIndex).Methods("GET")
-	r.HandleFunc("/tile/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}.png", serveTile).Methods("GET")
+	r.HandleFunc("/tile/{level:-?[0-9]+}/{z:[0-9]+}/{x:[0-9]+}/{y:[0-9]+}.png", serveTile).Methods("GET")
 
 	// Add some logging middleware
 	r.Use(func(next http.Handler) http.Handler {
@@ -291,7 +297,7 @@ func main() {
 
 	log.Printf("Starting sea level map server on port %s", port)
 	log.Printf("Visit http://localhost:%s to view the map", port)
-	log.Printf("Tile endpoint: http://localhost:%s/tile/{z}/{x}/{y}.png", port)
+	log.Printf("Tile endpoint: http://localhost:%s/tile/{level}/{z}/{x}/{y}.png", port)
 
 	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Fatal("Server failed to start:", err)

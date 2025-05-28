@@ -9,16 +9,114 @@
     <style>
         body { margin: 0; padding: 0; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        
+        .sea-level-control {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            font-family: Arial, sans-serif;
+            min-width: 200px;
+        }
+        
+        .sea-level-control h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #333;
+        }
+        
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .sea-level-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: #ddd;
+            outline: none;
+        }
+        
+        .sea-level-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #007cbf;
+            cursor: pointer;
+        }
+        
+        .sea-level-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #007cbf;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .sea-level-value {
+            font-weight: bold;
+            color: #007cbf;
+            min-width: 40px;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
+    
+    <div class="sea-level-control">
+        <h3>Sea Level</h3>
+        <div class="slider-container">
+            <input type="range" id="seaLevelSlider" class="sea-level-slider" 
+                   min="-1000" max="1000" value="0" step="1">
+            <span id="seaLevelValue" class="sea-level-value">0m</span>
+        </div>
+    </div>
+
     <script>
+        let currentSeaLevel = 0;
+        
         const map = new maplibregl.Map({
             container: 'map',
             style: 'https://demotiles.maplibre.org/style.json',
             center: [0,0],
             zoom: 2,
+        });
+
+        // Sea level slider functionality
+        const slider = document.getElementById('seaLevelSlider');
+        const valueDisplay = document.getElementById('seaLevelValue');
+        
+        function updateSeaLevel(level) {
+            currentSeaLevel = level;
+            
+            // Update the sea level source with new tiles
+            if (map.getSource('sea-level')) {
+                map.getSource('sea-level').setTiles([
+                    `/tile/${level}/{z}/{x}/{y}.png`
+                ]);
+            }
+        }
+        
+        // Update display value while dragging
+        slider.addEventListener('input', (e) => {
+            valueDisplay.textContent = e.target.value + 'm';
+        });
+        
+        // Update sea level tiles only when user releases the slider
+        slider.addEventListener('change', (e) => {
+            updateSeaLevel(parseInt(e.target.value));
         });
 
         map.on('load', () => {
@@ -38,7 +136,7 @@
             map.addSource('sea-level', {
                 'type': 'raster',
                 'tiles': [
-                    '/tile/{z}/{x}/{y}.png?3'
+                    `/tile/${currentSeaLevel}/{z}/{x}/{y}.png`
                 ],
                 'tileSize': 256,
                 'maxzoom': 15
