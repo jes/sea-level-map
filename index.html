@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sea level map</title>
+    <script src='https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.js'></script>
+    <link href='https://unpkg.com/maplibre-gl@5.5.0/dist/maplibre-gl.css' rel='stylesheet' />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script>
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://demotiles.maplibre.org/style.json',
+            center: [0,0],
+            zoom: 2,
+        });
+
+        map.on('load', () => {
+            map.addSource('terrain', {
+                'type': 'raster-dem',
+                'tiles': [
+                    'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
+                ],
+                'tileSize': 256,
+                'maxzoom': 15,
+                'encoding': 'terrarium'
+            });
+            
+            map.setTerrain({ 'source': 'terrain', 'exaggeration': 1.0 });
+
+            // Add sea level layer source
+            map.addSource('sea-level', {
+                'type': 'raster',
+                'tiles': [
+                    '/tile/{z}/{x}/{y}.png?2'
+                ],
+                'tileSize': 256,
+                'maxzoom': 15
+            });
+
+            // Add elevation visualization layer
+            map.addLayer({
+                'id': 'elevation',
+                'type': 'hillshade',
+                'source': 'terrain',
+                'paint': {
+                    'hillshade-illumination-direction': 315,
+                    'hillshade-exaggeration': 0.5,
+                    'hillshade-shadow-color': '#000000',
+                    'hillshade-highlight-color': '#FFFFFF',
+                    'hillshade-accent-color': '#808080'
+                }
+            });
+
+            // Add sea level layer
+            map.addLayer({
+                'id': 'sea-level',
+                'type': 'raster',
+                'source': 'sea-level',
+                'paint': {
+                    'raster-opacity': 0.7
+                }
+            });
+        });
+    </script>
+</body>
+</html> 
