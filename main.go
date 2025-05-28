@@ -17,8 +17,10 @@ import (
 
 // Cache structure for storing generated tiles
 type TileCache struct {
-	mu    sync.RWMutex
-	tiles map[string]CachedTile
+	mu       sync.RWMutex
+	tiles    map[string]CachedTile
+	inFlight map[string]chan []byte // Track in-flight requests
+	flightMu sync.Mutex
 }
 
 type CachedTile struct {
@@ -27,7 +29,8 @@ type CachedTile struct {
 }
 
 var cache = &TileCache{
-	tiles: make(map[string]CachedTile),
+	tiles:    make(map[string]CachedTile),
+	inFlight: make(map[string]chan []byte),
 }
 
 const (
@@ -48,24 +51,69 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 	}
 	cache.mu.RUnlock()
 
+	// Check if another goroutine is already processing this tile
+	cache.flightMu.Lock()
+	if ch, exists := cache.inFlight[cacheKey]; exists {
+		// Another request is in flight, wait for it
+		cache.flightMu.Unlock()
+		log.Printf("Waiting for in-flight tile: z=%s, x=%s, y=%s", z, x, y)
+		data := <-ch
+		return data, nil
+	}
+
+	// Mark this request as in-flight
+	ch := make(chan []byte, 1)
+	cache.inFlight[cacheKey] = ch
+	cache.flightMu.Unlock()
+
+	// Ensure we clean up the in-flight marker
+	defer func() {
+		cache.flightMu.Lock()
+		delete(cache.inFlight, cacheKey)
+		cache.flightMu.Unlock()
+	}()
+
 	// Fetch elevation data from terrarium tiles
 	elevationURL := fmt.Sprintf("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%s/%s/%s.png", z, x, y)
 
-	resp, err := http.Get(elevationURL)
+	log.Printf("Fetching upstream tile: z=%s, x=%s, y=%s", z, x, y)
+	fetchStart := time.Now()
+
+	// Create HTTP request with user-agent
+	req, err := http.NewRequest("GET", elevationURL, nil)
 	if err != nil {
+		close(ch) // Signal waiting goroutines that we failed
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Set user-agent header
+	req.Header.Set("User-Agent", "SeaLevelMap/1.0 (https://github.com/jes/sea-level-map)")
+
+	// Execute the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		close(ch) // Signal waiting goroutines that we failed
 		return nil, fmt.Errorf("failed to fetch elevation tile: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		close(ch) // Signal waiting goroutines that we failed
 		return nil, fmt.Errorf("elevation tile request failed with status: %d", resp.StatusCode)
 	}
 
 	// Decode the elevation PNG
 	elevationImg, err := png.Decode(resp.Body)
 	if err != nil {
+		close(ch) // Signal waiting goroutines that we failed
 		return nil, fmt.Errorf("failed to decode elevation PNG: %v", err)
 	}
+	fetchDuration := time.Since(fetchStart)
+	log.Printf("Upstream fetch completed in %v: z=%s, x=%s, y=%s", fetchDuration, z, x, y)
+
+	// Start processing timer
+	processStart := time.Now()
 
 	// Convert to RGBA if it's not already
 	var rgbaImg *image.RGBA
@@ -142,10 +190,17 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 	var buf bytes.Buffer
 	err = png.Encode(&buf, outputImg)
 	if err != nil {
+		close(ch) // Signal waiting goroutines that we failed
 		return nil, fmt.Errorf("failed to encode output PNG: %v", err)
 	}
 
 	tileData := buf.Bytes()
+	processDuration := time.Since(processStart)
+	totalDuration := time.Since(fetchStart)
+
+	log.Printf("Image processing completed in %v: z=%s, x=%s, y=%s", processDuration, z, x, y)
+	log.Printf("Total tile generation: %v (fetch: %v, process: %v): z=%s, x=%s, y=%s",
+		totalDuration, fetchDuration, processDuration, z, x, y)
 
 	// Cache the result
 	cache.mu.Lock()
@@ -154,6 +209,10 @@ func generateSeaLevelTile(z, x, y string) ([]byte, error) {
 		timestamp: time.Now(),
 	}
 	cache.mu.Unlock()
+
+	// Notify waiting goroutines
+	ch <- tileData
+	close(ch)
 
 	log.Printf("Generated and cached tile: z=%s, x=%s, y=%s", z, x, y)
 	return tileData, nil
