@@ -29,6 +29,14 @@
             color: #333;
         }
         
+        .control-section {
+            margin-bottom: 15px;
+        }
+        
+        .control-section:last-child {
+            margin-bottom: 0;
+        }
+        
         .slider-container {
             display: flex;
             align-items: center;
@@ -70,22 +78,80 @@
             min-width: 40px;
             text-align: right;
         }
+        
+        .base-map-select {
+            width: 100%;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: white;
+            font-size: 12px;
+            color: #333;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
     
     <div class="sea-level-control">
-        <h3>Sea Level</h3>
-        <div class="slider-container">
-            <input type="range" id="seaLevelSlider" class="sea-level-slider" 
-                   min="-1000" max="1000" value="0" step="10">
-            <span id="seaLevelValue" class="sea-level-value">0m</span>
+        <div class="control-section">
+            <h3>Base Map</h3>
+            <select id="baseMapSelect" class="base-map-select">
+                <option value="default">Default</option>
+                <option value="osm">OpenStreetMap</option>
+                <option value="satellite">Satellite</option>
+            </select>
+        </div>
+        
+        <div class="control-section">
+            <h3>Sea Level</h3>
+            <div class="slider-container">
+                <input type="range" id="seaLevelSlider" class="sea-level-slider" 
+                       min="-1000" max="1000" value="0" step="10">
+                <span id="seaLevelValue" class="sea-level-value">0m</span>
+            </div>
         </div>
     </div>
 
     <script>
         let currentSeaLevel = 0;
+        
+        // Base map styles configuration
+        const baseMapStyles = {
+            default: 'https://demotiles.maplibre.org/style.json',
+            osm: {
+                version: 8,
+                sources: {
+                    'osm': {
+                        type: 'raster',
+                        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                        tileSize: 256,
+                        attribution: '© OpenStreetMap contributors'
+                    }
+                },
+                layers: [{
+                    id: 'osm',
+                    type: 'raster',
+                    source: 'osm'
+                }]
+            },
+            satellite: {
+                version: 8,
+                sources: {
+                    'satellite': {
+                        type: 'raster',
+                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+                        tileSize: 256,
+                        attribution: '© Esri'
+                    }
+                },
+                layers: [{
+                    id: 'satellite',
+                    type: 'raster',
+                    source: 'satellite'
+                }]
+            }
+        };
         
         // Function to parse URL fragment and extract map state
         function parseUrlFragment() {
@@ -125,7 +191,7 @@
         
         const map = new maplibregl.Map({
             container: 'map',
-            style: 'https://demotiles.maplibre.org/style.json',
+            style: baseMapStyles.default,
             center: [initialState.lng, initialState.lat],
             zoom: initialState.zoom,
         });
@@ -133,6 +199,7 @@
         // Sea level slider functionality
         const slider = document.getElementById('seaLevelSlider');
         const valueDisplay = document.getElementById('seaLevelValue');
+        const baseMapSelect = document.getElementById('baseMapSelect');
         
         // Set initial slider value and display
         slider.value = initialState.level;
@@ -167,50 +234,86 @@
         map.on('zoomend', updateUrlFragment);
 
         map.on('load', () => {
-            map.addSource('terrain', {
-                'type': 'raster-dem',
-                'tiles': [
-                    'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
-                ],
-                'tileSize': 256,
-                'maxzoom': 15,
-                'encoding': 'terrarium'
-            });
+            addTerrainAndSeaLevel();
+        });
+
+        function addTerrainAndSeaLevel() {
+            // Add terrain source if it doesn't exist
+            if (!map.getSource('terrain')) {
+                map.addSource('terrain', {
+                    'type': 'raster-dem',
+                    'tiles': [
+                        'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
+                    ],
+                    'tileSize': 256,
+                    'maxzoom': 15,
+                    'encoding': 'terrarium'
+                });
+                
+                map.setTerrain({ 'source': 'terrain', 'exaggeration': 1.0 });
+            }
+
+            // Add sea level layer source if it doesn't exist
+            if (!map.getSource('sea-level')) {
+                map.addSource('sea-level', {
+                    'type': 'raster',
+                    'tiles': [
+                        `/tile/${currentSeaLevel}/{z}/{x}/{y}.png`
+                    ],
+                    'tileSize': 256,
+                    'maxzoom': 15
+                });
+            }
+
+            // Add elevation visualization layer if it doesn't exist
+            if (!map.getLayer('elevation')) {
+                map.addLayer({
+                    'id': 'elevation',
+                    'type': 'hillshade',
+                    'source': 'terrain',
+                    'paint': {
+                        'hillshade-illumination-direction': 315,
+                        'hillshade-exaggeration': 0.5,
+                        'hillshade-shadow-color': '#000000',
+                        'hillshade-highlight-color': '#FFFFFF',
+                        'hillshade-accent-color': '#808080'
+                    }
+                });
+            }
+
+            // Add sea level layer if it doesn't exist
+            if (!map.getLayer('sea-level')) {
+                map.addLayer({
+                    'id': 'sea-level',
+                    'type': 'raster',
+                    'source': 'sea-level',
+                    'paint': {
+                        'raster-opacity': 0.7
+                    }
+                });
+            }
+        }
+        
+        // Base map change functionality
+        baseMapSelect.addEventListener('change', (e) => {
+            const selectedStyle = e.target.value;
+            const newStyle = baseMapStyles[selectedStyle];
             
-            map.setTerrain({ 'source': 'terrain', 'exaggeration': 1.0 });
-
-            // Add sea level layer source
-            map.addSource('sea-level', {
-                'type': 'raster',
-                'tiles': [
-                    `/tile/${currentSeaLevel}/{z}/{x}/{y}.png`
-                ],
-                'tileSize': 256,
-                'maxzoom': 15
-            });
-
-            // Add elevation visualization layer
-            map.addLayer({
-                'id': 'elevation',
-                'type': 'hillshade',
-                'source': 'terrain',
-                'paint': {
-                    'hillshade-illumination-direction': 315,
-                    'hillshade-exaggeration': 0.5,
-                    'hillshade-shadow-color': '#000000',
-                    'hillshade-highlight-color': '#FFFFFF',
-                    'hillshade-accent-color': '#808080'
-                }
-            });
-
-            // Add sea level layer
-            map.addLayer({
-                'id': 'sea-level',
-                'type': 'raster',
-                'source': 'sea-level',
-                'paint': {
-                    'raster-opacity': 0.7
-                }
+            // Store current map state
+            const center = map.getCenter();
+            const zoom = map.getZoom();
+            
+            // Change the map style
+            map.setStyle(newStyle);
+            
+            // Re-add terrain and sea level layers after style loads
+            map.once('styledata', () => {
+                // Restore map position
+                map.setCenter(center);
+                map.setZoom(zoom);
+                
+                // Re-add our custom layers
+                addTerrainAndSeaLevel();
             });
         });
     </script>
