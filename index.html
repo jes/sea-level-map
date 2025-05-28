@@ -164,7 +164,8 @@
                     zoom: parseFloat(params[0]) || 2,
                     lat: parseFloat(params[1]) || 0,
                     lng: parseFloat(params[2]) || 0,
-                    level: params[3] ? parseInt(params[3]) : 0
+                    level: params[3] ? parseInt(params[3]) : 0,
+                    baseMap: params[4] || 'default'
                 };
             }
             return null;
@@ -174,7 +175,8 @@
         function updateUrlFragment() {
             const center = map.getCenter();
             const zoom = map.getZoom();
-            const fragment = `${zoom.toFixed(2)}/${center.lat.toFixed(6)}/${center.lng.toFixed(6)}/${currentSeaLevel}`;
+            const selectedBaseMap = baseMapSelect.value;
+            const fragment = `${zoom.toFixed(2)}/${center.lat.toFixed(6)}/${center.lng.toFixed(6)}/${currentSeaLevel}/${selectedBaseMap}`;
             window.history.replaceState(null, null, `#${fragment}`);
         }
         
@@ -183,7 +185,8 @@
             zoom: 2,
             lat: 0,
             lng: 0,
-            level: 0
+            level: 0,
+            baseMap: 'default'
         };
         
         // Set initial sea level
@@ -191,7 +194,7 @@
         
         const map = new maplibregl.Map({
             container: 'map',
-            style: baseMapStyles.default,
+            style: baseMapStyles[initialState.baseMap],
             center: [initialState.lng, initialState.lat],
             zoom: initialState.zoom,
         });
@@ -204,6 +207,9 @@
         // Set initial slider value and display
         slider.value = initialState.level;
         valueDisplay.textContent = initialState.level + 'm';
+        
+        // Set initial base map selection
+        baseMapSelect.value = initialState.baseMap;
         
         function updateSeaLevel(level) {
             currentSeaLevel = level;
@@ -305,6 +311,9 @@
             
             // Change the map style
             map.setStyle(newStyle);
+            
+            // Update URL fragment
+            updateUrlFragment();
             
             // Re-add terrain and sea level layers after style loads
             map.once('styledata', () => {

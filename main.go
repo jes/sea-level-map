@@ -158,7 +158,7 @@ func generateSeaLevelTile(seaLevel int, z, x, y string) ([]byte, error) {
 			defer wg.Done()
 
 			// Blue color for areas below sea level (underwater)
-			blue := [4]uint8{0, 100, 200, 255}
+			blue := [4]uint8{0, 50, 120, 255}
 			transparent := [4]uint8{0, 0, 0, 0}
 
 			for y := startRow; y < endRow && y < tileSize; y++ {
@@ -174,7 +174,6 @@ func generateSeaLevelTile(seaLevel int, z, x, y string) ([]byte, error) {
 						bVal := rgbaImg.Pix[srcOffset+2]
 
 						// Decode terrarium format: elevation = (R * 256 + G + B / 256) - 32768
-						// Using integer arithmetic for better performance
 						elevation := int(rVal)*256 + int(gVal) + int(bVal)/256 - 32768
 
 						// If elevation is below the specified sea level, make it blue, otherwise transparent
